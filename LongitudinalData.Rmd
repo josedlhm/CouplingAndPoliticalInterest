@@ -1,0 +1,369 @@
+---
+title: "Partner Transitions and Interest in Politics"
+author: "Jose de los Heros"
+date: "11/04/2022"
+output: pdf_document
+---
+
+**Abstract:** Using longitudinal data from the German Socio-Economic Panel (GSOEP), this paper studies how relationships affect interest in politics. The results suggest that partners matter in a predictable way: coupling with more politically engaged partners leads to higher levels of interest, while entering relationships with politically unengaed people results in lower levels of political interest. However,the size of these effects vary across genders. While men experiencing greater increases in interest after partnering with a highly interested person, women appear to suffer greater decreases after coupling with less interested partners. 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(haven)
+library(tidyverse)
+library(ggpubr)
+library(gridExtra)
+library(SOEPhelp)
+library(plm)
+library(stargazer)
+library(dplyr)
+
+pathl_variables <- c("pid", 
+                     "syear", 
+                     "sex", 
+                     "gebjahr", 
+                     "migback")
+
+
+pgen_variables <- c("cid", 
+                    "pid", 
+                    "syear",
+                    "pgpartnr", 
+                    "pglfs") 
+
+
+pequiv_variables <- c("cid", 
+                      "pid", 
+                      "hid", 
+                      "syear", 
+                      "d11101", # Age
+                      "d11109", # Years in Education
+                      "i11102", # HH Post-Government Income
+                      'l11101', # Bundesland
+                      "l11102", # East/West-Germany
+                      "w11105")
+
+
+##### loads data 
+soep_long<- read.csv("soep_for_jose.csv")
+
+soep_long_pathl <- read_dta("ppathl.dta", 
+                            encoding ="latin1", 
+                            col_select = pathl_variables)
+
+soep_long_pgen <- read_dta("pgen.dta", 
+                           encoding ="latin1", 
+                           col_select = pgen_variables)
+
+soep_long_pequiv <- read_dta("pequiv.dta",
+                             encoding ="latin1", 
+                             col_select = pequiv_variables) 
+
+
+##### merges data
+df_list <- list(soep_long, 
+                soep_long_pathl, 
+                soep_long_pgen, 
+                soep_long_pequiv)
+
+
+merge <- df_list %>%  reduce(left_join, by=c("pid", "syear"))
+```
+
+
+
+```{r, echo=FALSE}
+
+merge_1 <- merge %>% filter(migback>0)
+
+merge_2 <- merge_1 %>% filter(sex>0)
+
+
+merge_3 <- merge_2 %>% filter(d11101>=18 &d11101<=79 )
+
+merge_4 <- merge_3 %>% filter(i11102>0)
+
+merge_5 <- merge_4 %>% filter(d11109>0)
+
+
+merge_6 <- merge_5 %>% filter(pid>0) 
+
+merge_7 <- merge_6 %>% filter(syear>0)
+
+merge_8 <- merge_7 %>% filter(pglfs>0)
+
+
+merge_8$plh0007 <- car::recode(merge_8$plh0007, "1 = 4; 2 = 3; 3=2; 4=1")
+
+merge_8 <- merge_8 %>% mutate(political_interest = ifelse(plh0007<1|plh0007>4,NA, plh0007))
+
+merge_8 <- merge_8 %>% mutate(gender= ifelse(sex==1, "1-Male", "2-Female"))
+
+merge_8 <- merge_8 %>% mutate(migration_background= ifelse(migback==1, "1-Native", "2-Migration Background"))
+
+merge_8 <- merge_8 %>% mutate(employment_status= ifelse(pglfs%in%c(11,12), "1-Employment", 
+                                                        ifelse(pglfs==3, "2-Education",
+                                                               ifelse(pglfs==6, "3-Registered Unemployed", "4-Not Working"))))
+                                                               
+merge_8 <- merge_8 %>% mutate(age = d11101)                                             
+
+merge_8 <- merge_8 %>% mutate(age_group = ifelse(d11101>=18 & d11101<=29, "18-29", 
+                                                ifelse(d11101>=30 & d11101<=49, "30-49", 
+                                                ifelse(d11101>=50 & d11101<=79, "50-79", NA ))))
+
+merge_8 <- merge_8 %>% mutate(edu_c = ifelse(d11109 < 11, "1-Low Education", 
+                                                ifelse(d11109 >= 11 & d11109 < 13, "2-Mid Education", 
+                                                ifelse(d11109>=13, "3-High Education", NA ))))
+                              
+```
+
+```{r, echo=FALSE}
+
+left_side <- merge_8 %>% 
+  select(pid, syear, gender, political_interest, pgpartnr, i11102, age_group, edu_c, employment_status, migration_background, age) %>% 
+  rename(income=i11102) 
+
+partner_info <- merge_8  %>% 
+  select(pid, syear, political_interest, gender ) %>% 
+  rename(sex_partner=gender, pol_interest_partner=political_interest)
+
+partner_list <- merge %>% select(pgpartnr, syear) %>% 
+  filter(pgpartnr>0) %>% rename(partner_id=pgpartnr) 
+
+right_side <- merge(partner_list, partner_info, by.x=c("partner_id","syear"), by.y=c("pid", "syear"))
+
+both_sides <- merge(left_side, right_side, by.x=c("pgpartnr", "syear"), by.y=c("partner_id", "syear"), all.x=T)
+
+both_sides <- both_sides %>% filter(!is.na(political_interest))
+
+both_sides <- both_sides %>% mutate(pol_interest_partner=ifelse (pol_interest_partner > 0, pol_interest_partner, NA))
+
+both_sides <- both_sides %>% mutate(partner_situation = ifelse(pol_interest_partner%in%c(1,2), "2-Low Interest Partner", 
+                                                               ifelse(pol_interest_partner%in%c(3,4), "3-High Interest Partner", 
+                                                                      ifelse(pgpartnr!=-2 & is.na(pol_interest_partner),"4-Partner But No Info", 
+                                                                             ifelse(pgpartnr==-2, "1-No Partner", NA)))))
+```
+
+
+
+\newpage
+
+## **Introduction**
+
+
+|   Relationships have the potential to play an important role in determining one’s interest in politics.  In many cases, romantic partners are important conversation partners as well, who can do much to stifle or encourage their other half’s interests. These effects, for example, have been well-documented for spouses, whose “agreement of political attitudes” increases as a function of marriage duration (Stattin and Korol, 3, 2021).   Extended time together, indeed, seems to play a role in attitude formation. Despite scholars’ awareness of these trends, little attention has been paid to generalize these findings beyond marriage. This is precisely the task this research paper undertakes. To that end, it uses longitudinal survey  data to investigate how people’s interest in politics change as they enter and exist relationships with partners of varying level of political engagement, raising two questions. Firstly: Do people change their interest in politics in response their partner’s own level of interest?  And, secondly: If so, do these effects vary across genders?  
+
+## **Theory and Hypotheses **
+Theories about relationships and political interest offer important guidance in setting expectations for this inquiry. On the one hand, previous scholarship has found that political discussions...tend to occur more frequently with a partner than with other people” (Stattin and Korol,1, 2021). If partners are, in effect, primary interlocutors for political conversations,  then we should respondents who enter relationships with politically interested people to experience an increase in their own political interest.  On the other hand, the opposite should occur for those entering a relationship with a politically apathetic partner (Hypothesis 1). Furthermore, this pattern should vary with gender. Since “gendered stereotypes” discourage women from engaging in politics, this discouragement should act as a barrier, mitigating the potential effect of a having a politically interested partner (Sánchez-Vítores, 352, 2019). As a result, we should expect men to respond more strongly their partner’s interest in politics (Hypothesis 2). 
+
+
+## **Data and Analytic Sample**
+
+### Data 
+
+|   To test these hypotheses, this paper draws from 34 waves of the the German Socio Economic Panel, spanning the years 1985 - 2018 (GSOEP, 2021). The original sample contains a total of 682,447 person-years. For purposes of analysis, however, the sample was restricted to respondents whose ages lie between 18-79, resulting in a reduced sample size of 654,660 person years. Further exclusions were made on the basis on item non-response in the relevant variables: education, gender, migration background, and political interest. The final analytic sample includes 575,893 person years, or about 84.38 % of the total number of person years available in the data. In this sample of observations, there are 81,096 unique subjects. 
+
+### Variables and Methods 
+
+|   The dependent variable, interest in politics, is based on a survey question asking respondents, “Generally speaking, how strong is your interest in politics?” The item provides four responses: not at all, not so strong,  strong,  and very strong. As such, the variable is ordinal in nature. However, for purposes of estimation, it was recoded and treated as a continuous variable in which a score of 1 corresponds to the lowest level of interest (not at all) and 4 to the highest (very strong). 
+
+|   Data for the main independent variable, a partner’s political interest, was built using two survey items:  the personal identification number of a respondent’s partner and the partner’s level of interest in politics. The first item allows one to locate a respondent’s partner among survey respondents and the second, which was also used for the dependent variable, identifies that partner’s level of political interest. Since the combination of these two items created a series of possible answers which do not lie on a continuous scale, a categorical variable with four levels was created. If a respondent had a partner and this partner had a valid response for the political interest question, he or she was classified as either having a high or low interest partner.  Respondents who had a partner without a valid response for the political interest question were grouped in a third category, and those without a partner in a fourth.  
+
+|   As controls, this study considers three demographic variables: age, gender and migration background. All of these covariates were chosen because they are correlated with both interest in politics and choice in partners. As previous studies have found, men and older respondents tend to report higher interest in politics (Sánchez-Vítores 2019); and so do natives (Hochman and García-Albacete 2019). At the same time, all of these factors play a role in coupling.  Broadly, people tend to couple with those who are like them. This means that they will seek out partners of similar ages and with a similar migration background, usually of the opposite gender. Since these factors all impact interest in politics, it means that patterns in coupling will also translate into patterns across the political interest of partners. For instance, older respondents might tend to date older partners who, in turn, might tend to have a higher-than-average interest in politics.
+
+|   Education and employment status were considered for the same reason. Higher levels of education are correlated with higher interest in politics. Likewise, as another expression of assortative mating, people tend to date partners who are similarly educated (Stattin and Korol 2021). Unemployment, in turn, has been found to depress interest in politics, since “economic hardship diverts attention from social...problems” (Emenegger, Marx and and Schraff 2018). For similar reasons, unemployment might strain existing relationships and make it harder for individuals to enter new ones, thus affecting partner choice as well. 
+
+
+### Methods 
+
+|   To determine the impact of relationship transitions on political interest, two different estimation strategies were pursued. First, an OLS regression was run. This cross-sectional approach allows one to determine to what extent the political interest of respondent’s is associated with the interest of their partners.  However, it cannot provide estimates for what happens as respondents enter or exit relationships with people of varying political interest. For that reason, a fixed-effects approach was taken as well. This strategy looks at how variation in the independent variable– a partner’s interest in politics–impacts a respondent’s own level of political interest. This strategy also makes causal estimates more plausible, since it considers only variation ‘within’ subjects, thus discounting the impact of unobserved individual time-invariant characteristics that might drive both interest in politics and choice of partner. 
+
+|   To test the second hypothesis–whether there are heterogenous effects for men and women–the sample was divided by gender, and separate regressions of both kinds (OLS and fixed effects) were run for each subsample. Comparison of the size of the coefficients then allow one to make statements on the absence or presence of heterogenous effects.   
+
+|   Finally, all control variables listed above were included in the OLS regressions but only those which change over time were included in the fixed effects models. Gender, migration background were thus excluded in these regressions. Additionally, all models control for the wave of the survey. 
+
+
+### Sample Statistics
+
+|   Sample statistics, shown in Table 1, provide an overview of how this pool of respondents is composed. Gender-wise, the sample appears to be well-balanced, with slightly more than half of respondents, 52.1%, being female. 78.4% of respondents are natives while the rest come from a migration background, direct or indirectly.  In terms of education, fewer than a third are grouped in the “high” category,  while 43.0% of respondents fall into the largest sub-group: the “low” category.  The majority of respondents have a partner: 42.1% have one with low interest in politics and 24.8% with a high interest. A sample subgroup, 6.1%,  have a partner but their political interest is not available. In terms of employment, a majority of the sample, 61.8%, is employed; the second largest group, 30.4%, is composed by those who are not working: those in retirement, on parental leave, or who have a secondary job. Finally, more than half of respondents, 64.1%, report having a low interest in politics.  
+
+|   This same table also provides information on the covariate vary across the types of partnership. To make comparisons easier, the lowest two levels of interest (1 and 2) were grouped as “low” and the rest as “high.” The distributions in the table conform to expectations. Among respondents who have a partner with a high interest in politics, the greatest share, 51.9%, falls into the oldest age cohort. Similarly, in accordance with the idea that men tend to report higher scores of political interest, it is women who have the largest share, 65.4%, of highly interested partners. In education too, it is the highly education that are best represented among those with a highly interested partner, with a share of 35.9%. Furthermore, the politically interested also have the highest share of high interest partners, 52%, and the same goes for natives, who represent 85.6% of those who have a politically interested partner. Finally, while the registered unemployed are a minority in all categories, they are proportionately best represented among those without a partner (7.5%). The employed, in turn, are a majority in all partnership categories but the are proportionately best represented in the low-interest partner category. 
+
+\newpage
+**Table 1: Summary Table of Sample Statistics Across Partnership Categories ** 
+
+```{r, echo=F,comment=NA, message=FALSE, warning=FALSE }
+#creates labels for variables in summary table
+
+both_sides <- both_sides %>% mutate(pol_interest_factor = ifelse(political_interest%in%c(1,2),"1- Low Interest","2-High Interest"))
+                                                                 
+
+table1::label(both_sides$pol_interest_factor) <- "Political Interest"
+table1::label(both_sides$partner_situation) <- "Partner Political Interest"
+table1::label(both_sides$age_group) <- "Age Category"
+table1::label(both_sides$gender) <- "Gender"
+table1::label(both_sides$edu_c) <- "Education Level"
+table1::label(both_sides$migration_background) <- "Migration Background"
+table1::label(both_sides$employment_status) <- "Employment Status"
+table1::table1(~partner_situation + age_group + gender + edu_c+pol_interest_factor+employment_status+migration_background| partner_situation, data = both_sides)
+
+
+```
+
+
+\newpage
+## **Descriptive Results**
+
+|   The results suggested by the sample statistics table are confirmed in Figure 1. This table shows the distribution of types of partnership across different levels of political interest. In brief, it shows that among those who have a high level of political interest, levels 3 and 4, a proportionately higher number have high-interest partners. On the other hand, among the two lowest levels of interest, the best represented are those who have a low-interest partner. 
+
+
+
+**Figure 1: Types of Relationship  Across Levels of Political Interest** 
+```{r, echo=F,comment=NA, fig.align="left" }
+
+
+table_1 <- table(both_sides$partner_situation,both_sides$political_interest) 
+
+table_2 <- prop.table(table_1,1)
+
+table_3 <- as.data.frame(table_2)
+
+table_3$percent <- table_3$Freq*100
+
+
+political_interest_plot <- ggplot(table_3, aes(fill=Var1, x=Var2, y=percent))+ 
+  geom_bar(stat="identity", position=position_dodge(width=.5))+ 
+  ylab("%")+ 
+  xlab("Political Interest (from Low to High)")+ 
+  labs(title="Distribution of Political Interest by Partnership Status")+
+  scale_fill_discrete(name = "Partnership status", labels=c("No Partner", "Low Interest Partner", "High Interest Partner", "Partner But No Info"))+
+                    
+  theme_bw()
+
+political_interest_plot
+
+```
+\newpage
+
+## **Regression Results**
+
+**Table 2: OLS and FE Models of the Effects of Partnership on Political Interest** 
+
+```{r, echo=F,comment=NA, message=FALSE, warning=FALSE, fig.align="left" }
+
+model_2<-plm(as.numeric(political_interest) ~ partner_situation + edu_c+age_group +employment_status+as.factor(syear), model = "within", index=c("pid","syear"), data=both_sides)
+
+model_1<-lm(as.numeric(political_interest)~partner_situation+as.factor(syear)+edu_c+gender+age_group+migration_background+employment_status,data=both_sides)
+
+stargazer(model_1, model_2, 
+          type="text",
+          column.labels = c("OLS Model", "FE Model"), 
+          dep.var.labels = "Political Interest (1-4, low to high)", 
+          model.numbers = F, 
+          covariate.labels = c("Low Interest Partner (Ref. No Partner)", "High Interest Partner", "Partner But No Info", "Mid Education (Ref. Low)", "High Education",  "Female (Ref. Male)", "Age 30-49 (Ref. 18-29)", "Age 50-79", "Migration Background (Ref. Native)", "Employment Status: In Education (Ref. Employed)", "Registered Unemployment", "Not Working"), 
+          single.row = TRUE, 
+          column.sep.width = "1pt", 
+           omit = c("syear"),
+  omit.labels = c("Wave"), 
+  notes=c("Yearly survey waves were included in both models as a variable"))
+
+```
+\newpage
+
+|   The first model uses an OLS regression to estimate the effect of different types of partnership on a respondent's interest in politics, controlling for education, gender, age, migration background and employment status.  Holding all of these variables constant, the model shows that, compared to being single, having a partner with a low interest in politics is associated with a 0.137 point decrease in political interest. Having a partner with high political interest, on the other hand, is associated with a 0.255 point increase. Finally, being with a partner for whom there is no available information on political interest is associated with the slight increase of 0.028 points. All of these parameters are statistically significant at conventional levels (p<0.05). Furthermore, higher levels of education appear to be associated with higher levels of political interest. Holding all else constant, the model shows that having a middle level of education is associated with a 0.236 point increase in political interest relative to having a low level of education. In comparison to the same reference group, having a high level of education is associated, on average, with a 0.537 point increase in political interest. Both of this parameters are also significant at conventional levels (p<0.05). In terms of gender, holding all else constant, being female is associated, on average, with a 0.397 point decrease in political interest compared to being male. In terms of age, lower levels of political interest appear to be associated with youth. Holding all else constant, those who are 30-49, show, on average, levels of political interest that are 0.164 points higher than those in the youngest cohort. In turn, being in the oldest cohort is associated, on average, 0.357 point increase in political interest, compared again to those who are 18-29. These parameters are also significant at conventional levels (p<0.05). Coming from a migration background also seems to be associated with lower levels of political interest. Holding all else constant, migrants show, on average, a level of political interest that is 0.179 points lower than natives. This effect is statistically significant at conventional levels ( <0.05). Finally, the effect of employment status varies. Holding all else constant, those who are in education, show, on average, levels of political interest that are 0.153 higher than those who are in employment. Those who are in registered unemployment show  levels of political interest that are 0.075 points below those who are employed. Not working, in turn, is associated with a 0.035 point increase in political interest, relative to being in employment.  All three effects are statistically significant at conventional levels (p<0.05). 
+
+|   In the fixed effects regression, the same partnership effects hold, although in a more attenuated form. In this model, holding all else constant, transitioning from being single to a relationship with a partner with low political interest is associated, on average, with a decrease in political interest of 0.027 points. Conversley, entering a relationship with a partner with a high interest is associated, on average, with a 0.161 point increase in poltical interest. All three parameters are statistically significant at conventional levels (p<0.05). Receiving further education is also associated with increased in political interest. Holding all else constant, starting from a low level of education and attaining a mid-levelis associated with a 0.057 point increase in political interest; getting a high level of education, in turn, is associated with a 0.061 point increase. Both effects are statistically significant at conventional levels (p<0.05). In this model, the effects of leaving employment on political interest are all positive but slight in magnitude. Holding all else constant, transitioning from employment to education is associated with a 0.025 increase in political interest; transitioning to unemployment, likewise, is associated with a 0.029 point increase; transitioning to not working, finally, is associated with a 0.014 point increase.  All three effects are statistically significant at conventional levels (p<0.05). 
+
+\newpage
+
+**Table 3: OLS Results for the Gendered Effects of Partnership on Political Interest ** 
+
+```{r, echo=F,comment=NA, message=FALSE, warning=FALSE , fig.align="left"}
+
+male<- both_sides %>% filter(gender=="1-Male")
+
+female<- both_sides %>% filter(gender=="2-Female")
+
+model_3 <- lm(political_interest ~ partner_situation+edu_c+age_group+employment_status+syear+migration_background, data=male)
+
+model_4 <- lm(political_interest ~ partner_situation+edu_c+age_group+employment_status+syear+migration_background, data=female)
+
+
+stargazer(model_3,model_4, 
+          type="text",
+          column.labels = c("Male Only", "Female Only"), 
+          dep.var.labels = "Political Interest (1-4, low to high)", 
+          model.numbers = F, 
+             covariate.labels = c("Low Interest Partner (Ref. No Partner)", "High Interest Partner", "Partner But No Info", "Mid Education (Ref. Low)", "High Education", "Age 30-49 (Ref. 18-29)", "Age 50-79", "Employment Status: In Education (Ref. Employed)", "Registered Unemployment", "Not Working", "Migration Background (Ref. Native)"), 
+          single.row = TRUE, 
+          column.sep.width = "1pt", 
+           omit = c("syear"),
+  omit.labels = c("Wave"), 
+  notes=c("Yearly survey waves were included in both models as a variable"))
+
+  
+```
+
+\newpage
+
+**Table 4: FE Results for the Gendered Effects of Partnership on Political Interest"** 
+
+```{r, echo=F,comment=NA, message=FALSE, warning=FALSE, fig.align="center"}
+model_5<-plm(as.numeric(political_interest) ~ partner_situation + edu_c+age_group +employment_status+syear, model = "within", index=c("pid","syear"), data=male)
+
+model_6<-plm(as.numeric(political_interest) ~ partner_situation + edu_c+age_group+employment_status +syear, model = "within", index=c("pid","syear"), data=female)
+
+stargazer(model_5,model_6, 
+          type="text",
+          column.labels = c("Male Only", "Female Only"), 
+          dep.var.labels = "Political Interest (1-4, low to high)", 
+          model.numbers = F, 
+             covariate.labels = c("Low Interest Partner (Ref. No Partner)", "High Interest Partner", "Partner But No Info", "Mid Education (Ref. Low)", "High Education", "Age 30-49 (Ref. 18-29)", "Age 50-79", "Employment Status: In Education (Ref. Employed)", "Registered Unemployment", "Not Working"), 
+          single.row = TRUE, 
+          column.sep.width = "1pt", 
+           omit = c("syear"),
+  omit.labels = c("Wave"), 
+  notes=c("Yearly survey waves were included in both models as a variable"))
+
+
+```
+\newpage
+|   To determine whether heterogenous effects exist for partner transitions across genders, separate OLS and FE regressions were ran for gender-based subsamples. The results from both types of models suggest that transitioning to high interest partnerships have a greater effect on the political interest of men and that transitioning to low interest partnerships have a greater negative effect for women. In the OLS models, shown in Table 3, having a partner with low political interest is associated, on average, with a 0.20 point decrease in political interest for men, holding all else equal. For women, however, the association is much stronger. Females with a low interest partner have, on average, levels of political interest that are 0.231 lower than their single counterparts. The association between political interest and high interest partners, on the other hand, is stronger for men. Holding all else equal, male respondents who have a high interest partner show, on average, levels of political interest that are .418 points higher than their single counterparts; the political interest of women with a high interest partner is, on average, only 0.165 points higher than their single counterparts. Finally, there are diverging effects of having a partner for whom no political information is available, although both effects are small in magnitude. Holding all else constant, compared to women who are single, female respondents with this type of partners show levels of political interest that are 0.018 points lower. Men, in turn, display average levels of political interest that are 0.095 points  All of these effects are statistically significant at conventional levels (p<0.05). 
+
+|   In the fixed effects models, shown in Table 4, a similar pattern is visible. Like in the OLS models, the political interest of women appears to be more sensitive to the effects of having a low interest partner. Holding all else equal, female respondents who transition from being single into a relationship with a low interest partnership experience, on average, a 0.064 point decrease in political interest. Men who enter a similar relationship, on the other hand, actually experience a slight increase in political interest of 0.029 points on average. Men who enter relationships with high interest partners, on the other hand, experience a more substantial increase in political interest than women. Male respondents who transition into a high interest partnership experience, on average, a 0.246 increase in political interest. For female respondents, the increase is only of 0.114 points. Finally transitioning into a partnership where the partner's political interest is unknown is associated with a slight increase for both men and women, of 0.045 and 0.015 points respectively. These results are also statistically significant at conventional levels (p<0.05). 
+
+
+## **Conclusion and Limitations**
+
+|   The motivation behind this study was to determine the effect that entering a relationship had on political interest. The intuition behind this inquiry was that partners are important interlocutors and thus have the potential to encourage or stifle a person’s interest in politics. To an extent, regression results confirm this intuition, lending support to the first hypothesis. In both OLS and fixed effects regressions, respondents who had partners with high political displayed higher levels of interest themselves. The problem, however, is that this result can be a reflection of self-selection. Perhaps people who share interests–among them politics–tend to couple together. The OLS model, which provides a static picture of the association between the variables, cannot discount this possibility. On the other hand, the fixed effect model offers a better chance of arriving at a causal estimate. By looking at variation within subjects, it provides a better picture of what happens to a person’s interest over time as they enter or exit relationships. In so doing, it controls as well for a series of unobserved time invariant factors, such as intelligence, which drive both interest in politics and choice in partners.  These results, although less strong than those borne out by the OLS model, suggest that partnering does have the capacity to change a person’s political interest. Interestingly, they show that interest is more contagious than apathy. Respondents who coupled with politically interested partners experienced and increase in interest that was greater in magnitude than the decrease that respondents suffered when they coupled with partners who were not interested in politics. 
+
+|   The results also provided partial support for the second hypothesis. Although the effects of coupling on political interest do vary by gender, they did not do so in the expected direction. We expected to female respondents to be more sensitive to relationship transitions , largely because, as the literature suggests, they have fewer pressures to feign an interest in politics. This means, on one hand, that they can reflect decreases in interest more transparently, and, on the other, have more capacity to show increased interest than male respondents, who might already report inflated scores on the upper end of the spectrum. The results confirm only half of these expectations. Female respondents were indeed more sensitive to partnership transitions, but only to those with low interest partners. In the fixed effect regressions, women experienced a greater decrease in political interest after coupling with low interest partners than males, who actually experienced a slight increase. Men, on the other hand, experienced larger increase in interest after coupling with high interest partners than women. Perhaps one reason for these results, in accordance with theoretical expectations, is that male respondents feel pressured to report equal or greater interests as their partners, whereas women do not.  
+
+|   These results, nonetheless, should still be taken with caution; there are several limitations that hamper the study. One, notably, is that the partnership variable does not reflect partnership status with complete accuracy. Only respondents whose partners were also surveyed for the GSOEP were considered as being in a relationship. This means that there is probably a sizable sample of those treated as single who were actually partnered. Relatedly, the model cannot control for anticipation. Indeed, there might be respondents who become more interested in politics as a result of courting a potential partner, before their relationship is officially registered in the survey. These increases in interest, accordingly, would not be attributed to the partnership Thirdly, the model does not account for unobserved events which might affect both variables. There might be events, such as a foreign war for example, which could independently increase both a respondent's and her partner's interest in politics. In such a case, the result would be misleading. While respondent would appear to have transitioned from having a low interest relationship to a high interest one, and to have experienced an increase in political interest themselves, this increase would not actually the result of this transition, but of a common event affecting both variables. 
+
+
+
+\newpage
+## **Sources Cited** 
+
+Emmenegger, P., Marx, P., & Schraff, D. (2017). Off to a Bad Start: Unemployment and Political Interest During Early Adulthood. The Journal of Politics, 79(1), 315-328.
+
+Goebel, Jan; Liebig, Stefan; Richter, David; Schröder, Carsten; Schupp, Jürgen et. al. (2020): SOEP Innovation-Sample (SOEP-IS), data from 1998-2018. Version: 2018. SOEP Socio-Economic Panel Study. Dataset
+
+Hochman, O., & García-Albacete, G. (2019). Political interest among European youth with and without an immigrant background. Social Inclusion, 7(4), 257-278.
+
+Sánchez-Vítores, I. (2019). Different Governments, Different Interests: The Gender Gap in Political Interest. Social Politics: International Studies in Gender, State & Society, 26(3), 348-369.
+
+Stattin, H., & Korol, L. (2021). Is Love Politically Blind? The Role that the Romantic Partner Plays for Young Adults’ Socio-Political Interest. Journal of Youth Studies, 24(4), 481-498.
+
+
+
+
+\newpage
+## **Apendices** 
+
+**Appendix 1: Code Used** 
+
+```{r ref.label=knitr::all_labels(), echo=TRUE, eval=FALSE}
+```
+
